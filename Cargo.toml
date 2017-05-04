@@ -1,0 +1,8 @@
+[package]
+name = "schatten"
+version = "0.1.0"
+authors = ["mzumi <mzumi@gmail.com>"]
+
+[dependencies]
+hyper = "*"
+crossbeam = "*"
