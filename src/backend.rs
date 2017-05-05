@@ -1,15 +1,15 @@
+use std::net::ToSocketAddrs;
+
 #[derive(Debug, Clone)]
 pub struct Backend {
-    pub host: String,
-    pub port: usize,
+    pub addr: ToSocketAddrs,
     pub name: String,
 }
 
 impl Backend {
-    pub fn new(name: String, host: String, port: usize) -> Self {
+    pub fn new(name: String, addr: ToSocketAddrs) -> Self {
         Backend {
-            host: host,
-            port: port,
+            addr: addr,
             name: name,
         }
     }
