@@ -22,10 +22,10 @@ fn munge_headers(headers: &mut Headers, backend: &Backend) {
 }
 
 fn main() {
-    let production = Backend::new("production".to_owned(), "localhost".to_owned(), 3000);
-    let sandbox = Backend::new("sandbox".to_owned(), "localhost".to_owned(), 8888);
+    let production = Backend::new("production".to_owned(), "localhost:3000";
+    let sandbox = Backend::new("sandbox".to_owned(), "localhost:3001";
 
-    let mut server = ProxyServer::new("localhost".to_owned(), 1234, production);
+    let mut server = ProxyServer::new("localhost:1234", production);
 
     server.add_backend(sandbox);
 

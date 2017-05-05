@@ -10,13 +10,13 @@ use crossbeam;
 use backend::*;
 use std::io::Read;
 use std::mem;
+use std::net::ToSocketAddrs;
 
 pub type SelectionFunc = fn(&Method) -> Vec<String>;
 pub type MungeHeadersFunc = fn(&mut Headers, &Backend);
 
 pub struct ProxyServer {
-    host: String,
-    port: u16,
+    addr: ToSocketAddrs,
     production: Backend,
     sandboxes: Vec<Backend>,
     on_select_backends: Option<SelectionFunc>,
@@ -24,10 +24,9 @@ pub struct ProxyServer {
 }
 
 impl ProxyServer {
-    pub fn new(host: String, port: u16, production: Backend) -> Self {
+    pub fn new(addr: ToSocketAddrs, production: Backend) -> Self {
         ProxyServer {
-            host,
-            port,
+            addr: addr,
             production: production,
             sandboxes: vec![],
             on_select_backends: None,
@@ -47,7 +46,7 @@ impl ProxyServer {
     }
 
     pub fn run(self) {
-        match Server::http((self.host.as_str(), self.port)) {
+        match Server::http((self.addr.ip(), self.addr.port())) {
             Ok(server) => {
                 server.handle(self)
                     .unwrap();
@@ -64,7 +63,10 @@ impl ProxyServer {
                     body: Vec<u8>)
                     -> Result<client::Response, Error> {
 
-        let url = format!("http://{}:{}{}", backend.host, backend.port, uri);
+        let url = format!("http://{}:{}{}",
+                          backend.addr.ip(),
+                          backend.addr.port(),
+                          uri);
 
         if let Some(ref munge_headers) = self.on_munge_headers {
             munge_headers(&mut headers, backend);
@@ -84,9 +86,10 @@ impl Handler for ProxyServer {
         let mut copy_body: Vec<u8> = vec![];
         let _ = body.read_to_end(&mut copy_body);
 
-        if let Some(ref select_backends) = self.on_select_backends {            
+        if let Some(ref select_backends) = self.on_select_backends {
             let servers = select_backends(&method);
-            let sandboxes = self.sandboxes.iter().filter(|s| servers.contains(&s.name)).collect::<Vec<_>>();
+            let sandboxes =
+                self.sandboxes.iter().filter(|s| servers.contains(&s.name)).collect::<Vec<_>>();
 
             crossbeam::scope(|scope| {
                 for s in &sandboxes {
@@ -95,7 +98,9 @@ impl Handler for ProxyServer {
                     let method = method.clone();
                     let uri = uri.clone();
 
-                    let _ = scope.spawn(move || { self.send_request(&s, &uri.to_string(), &method, headers, body) });
+                    let _ = scope.spawn(move || {
+                        self.send_request(&s, &uri.to_string(), &method, headers, body)
+                    });
                 }
             });
         }
