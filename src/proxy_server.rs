@@ -10,9 +10,12 @@ use crossbeam;
 use backend::*;
 use std::io::Read;
 use std::mem;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub type SelectionFunc = fn(&Method) -> Vec<String>;
 pub type MungeHeadersFunc = fn(&mut Headers, &Backend);
+pub type BackendsFinishedFunc = fn(&HashMap<String, client::Response>, &[&Backend]);
 
 pub struct ProxyServer {
     host: String,
@@ -21,6 +24,7 @@ pub struct ProxyServer {
     sandboxes: Vec<Backend>,
     on_select_backends: Option<SelectionFunc>,
     on_munge_headers: Option<MungeHeadersFunc>,
+    on_server_finished: Option<BackendsFinishedFunc>,
 }
 
 impl ProxyServer {
@@ -32,6 +36,7 @@ impl ProxyServer {
             sandboxes: vec![],
             on_select_backends: None,
             on_munge_headers: None,
+            on_server_finished: None,
         }
     }
     pub fn add_backend(&mut self, backend: Backend) {
@@ -44,6 +49,10 @@ impl ProxyServer {
 
     pub fn on_munge_headers(&mut self, on_munge_headers: MungeHeadersFunc) {
         self.on_munge_headers = Some(on_munge_headers);
+    }
+
+    pub fn on_server_finished(&mut self, on_server_finished: BackendsFinishedFunc) {
+        self.on_server_finished = Some(on_server_finished);
     }
 
     pub fn run(self) {
@@ -80,13 +89,20 @@ impl ProxyServer {
 
 impl Handler for ProxyServer {
     fn handle(&self, request: Request, mut response: Response) {
+        let mut all_backends = vec![&self.production];
+
         let (_remote_addr, method, headers, uri, _version, mut body) = request.deconstruct();
         let mut copy_body: Vec<u8> = vec![];
         let _ = body.read_to_end(&mut copy_body);
 
+        let result = Arc::new(Mutex::new(HashMap::new()));
+
         if let Some(ref select_backends) = self.on_select_backends {            
             let servers = select_backends(&method);
             let sandboxes = self.sandboxes.iter().filter(|s| servers.contains(&s.name)).collect::<Vec<_>>();
+
+
+            all_backends.append(&mut sandboxes.clone());
 
             crossbeam::scope(|scope| {
                 for s in &sandboxes {
@@ -95,7 +111,13 @@ impl Handler for ProxyServer {
                     let method = method.clone();
                     let uri = uri.clone();
 
-                    let _ = scope.spawn(move || { self.send_request(&s, &uri.to_string(), &method, headers, body) });
+                    let result = result.clone();        
+
+                    let _ = scope.spawn(move || { 
+                        let res = self.send_request(&s, &uri.to_string(), &method, headers, body).unwrap();
+                        let mut result = result.lock().unwrap();
+                        result.insert(s.name.clone(), res);
+                    });
                 }
             });
         }
@@ -106,6 +128,7 @@ impl Handler for ProxyServer {
                           headers.clone(),
                           copy_body)
             .unwrap();
+
 
         mem::replace(response.status_mut(), res.status);
         response.headers_mut().clear();
@@ -122,5 +145,19 @@ impl Handler for ProxyServer {
         let mut body: Vec<u8> = vec![];
         let _ = res.read_to_end(&mut body);
         response.send(&body).unwrap();
+
+        {
+            let mut result = result.lock().unwrap();
+            result.insert(self.production.name.clone(), res);
+        }
+
+        if let Some(ref server_finished) = self.on_server_finished {
+            let result = result.clone(); 
+            let hash = &*result.lock().unwrap();
+
+            if hash.len() == all_backends.len() {
+                server_finished(hash, all_backends.as_slice());
+            }
+        }
     }
 }
