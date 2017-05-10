@@ -1,9 +1,12 @@
 extern crate schatten;
 extern crate hyper;
 
+use std::collections::HashMap;
+
 use hyper::method::Method;
 use hyper::header::Headers;
 use hyper::server::{Handler, Server, Request, Response};
+use hyper::client;
 
 use schatten::{Backend, ProxyServer};
 
@@ -21,6 +24,12 @@ fn munge_headers(headers: &mut Headers, backend: &Backend) {
     }
 }
 
+fn server_finished(responses: &HashMap<String, client::Response>, backends: &[&Backend]) {
+    for (k, v) in responses.iter() {
+        println!("{}, {}", k, v.status);
+    }
+}
+
 fn main() {
     let production = Backend::new("production".to_owned(), "localhost".to_owned(), 3000);
     let sandbox = Backend::new("sandbox".to_owned(), "localhost".to_owned(), 8888);
@@ -31,6 +40,6 @@ fn main() {
 
     server.on_select_backends(select_backends);
     server.on_munge_headers(munge_headers);
-
+    server.on_server_finished(server_finished);
     server.run();
 }
